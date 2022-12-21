@@ -1,0 +1,22 @@
+version: "3.4"
+
+services:
+  goci:
+    image: pedromol/goci
+    container_name: goci
+    environment:
+      - INSTANCE_SHAPE="xxx"
+      - INSTANCE_NAME="xxx"
+      - INSTANCE_IMAGE="xxx"
+      - INSTANCE_SUBNET="xxx"
+      - INSTANCE_AD="xxx"
+      - INSTANCE_COMPARTMENT="xxx"
+      - INSTANCE_SSHAUTHORIZED="xxx"
+      - VNIC_DISPLAY_NAME="xxx"
+      - VNIC_HOSTNAME="xxx"
+      - USER="xxx"
+      - FINGERPRINT="xxx"
+      - PRIVATE_KEY="xxx"
+      - TENANCY="xxx"
+      - REGION="xxx"
+    restart: unless-stopped
