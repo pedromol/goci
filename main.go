@@ -4,11 +4,11 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"os"
 	"regexp"
 	"strconv"
-	"time"
-	"os"
 	"strings"
+	"time"
 
 	"github.com/oracle/oci-go-sdk/v65/common"
 	"github.com/oracle/oci-go-sdk/v65/core"
@@ -53,21 +53,28 @@ func serveMetrics() {
 }
 
 func shouldRetry(r common.OCIOperationResponse) bool {
-	attrs := []attribute.KeyValue{
-		attribute.Key("code").String(strconv.Itoa(r.Response.HTTPResponse().StatusCode)),
-	}
-	conf.counter.Add(context.TODO(), 1, attrs...)
+	response := r.Response.HTTPResponse()
 
-	msg := conf.messageRegex.FindAllStringSubmatch(r.Error.Error(), 1)
-	for i := range msg {
+	if response != nil {
 		attrs := []attribute.KeyValue{
-			attribute.Key("message").String(msg[i][1]),
+			attribute.Key("code").String(strconv.Itoa(response.StatusCode)),
+		}
+
+		msg := conf.messageRegex.FindAllStringSubmatch(r.Error.Error(), 1)
+		for i := range msg {
+			attrs = append(attrs, attribute.Key("message").String(msg[i][1]))
+		}
+
+		conf.counter.Add(context.TODO(), 1, attrs...)
+
+		if response.StatusCode == 429 {
+			time.Sleep(5 * time.Second)
+		}
+	} else {
+		attrs := []attribute.KeyValue{
+			attribute.Key("message").String(r.Error.Error()),
 		}
 		conf.counter.Add(context.TODO(), 1, attrs...)
-	}
-
-	if r.Response.HTTPResponse().StatusCode == 429 {
-		time.Sleep(5 * time.Second)
 	}
 	time.Sleep(13 * time.Second)
 	return true
@@ -100,11 +107,11 @@ func main() {
 		vnicHostname:          os.Getenv("VNIC_HOSTNAME"),
 		user:                  os.Getenv("USER"),
 		fingerprint:           os.Getenv("FINGERPRINT"),
-		privateKey:            strings.Replace(os.Getenv("PRIVATE_KEY"),"\\n","\n", -1),
+		privateKey:            strings.Replace(os.Getenv("PRIVATE_KEY"), "\\n", "\n", -1),
 		tenancy:               os.Getenv("TENANCY"),
 		region:                os.Getenv("REGION"),
 		counter:               ctr,
-		messageRegex:          regexp.MustCompile("Message: (.+)\\.?"),
+		messageRegex:          regexp.MustCompile(`Message: (.+)\.?`),
 	}
 
 	cfg := common.NewRawConfigurationProvider(conf.tenancy, conf.user, conf.region, conf.fingerprint, conf.privateKey, nil)

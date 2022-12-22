@@ -5,18 +5,18 @@ services:
     image: pedromol/goci
     container_name: goci
     environment:
-      - INSTANCE_SHAPE="xxx"
-      - INSTANCE_NAME="xxx"
-      - INSTANCE_IMAGE="xxx"
-      - INSTANCE_SUBNET="xxx"
-      - INSTANCE_AD="xxx"
-      - INSTANCE_COMPARTMENT="xxx"
-      - INSTANCE_SSHAUTHORIZED="xxx"
-      - VNIC_DISPLAY_NAME="xxx"
-      - VNIC_HOSTNAME="xxx"
-      - USER="xxx"
-      - FINGERPRINT="xxx"
-      - PRIVATE_KEY="xxx"
-      - TENANCY="xxx"
-      - REGION="xxx"
+      - INSTANCE_SHAPE=
+      - INSTANCE_NAME=
+      - INSTANCE_IMAGE=
+      - INSTANCE_SUBNET=
+      - INSTANCE_AD=
+      - INSTANCE_COMPARTMENT=
+      - INSTANCE_SSHAUTHORIZED=
+      - VNIC_DISPLAY_NAME=
+      - VNIC_HOSTNAME=
+      - USER=
+      - FINGERPRINT=
+      - PRIVATE_KEY=
+      - TENANCY=
+      - REGION=
     restart: unless-stopped
