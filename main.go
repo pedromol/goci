@@ -18,6 +18,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/prometheus"
 	"go.opentelemetry.io/otel/metric/instrument"
+	"go.opentelemetry.io/otel/metric/instrument/asyncfloat64"
 	"go.opentelemetry.io/otel/metric/instrument/syncfloat64"
 	"go.opentelemetry.io/otel/sdk/metric"
 )
@@ -38,7 +39,10 @@ type config struct {
 	tenancy               string
 	region                string
 	counter               syncfloat64.Counter
+	gauge                 asyncfloat64.Gauge
 	messageRegex          *regexp.Regexp
+	delay                 time.Duration
+	lastDelayInc          time.Time
 }
 
 var conf config
@@ -68,7 +72,12 @@ func shouldRetry(r common.OCIOperationResponse) bool {
 		conf.counter.Add(context.TODO(), 1, attrs...)
 
 		if response.StatusCode == 429 {
-			time.Sleep(5 * time.Second)
+			conf.delay += 1
+		} else {
+			if time.Now().UTC().Sub(conf.lastDelayInc) > time.Duration(5*time.Minute) {
+				conf.delay -= 1
+				conf.lastDelayInc = time.Now().UTC()
+			}
 		}
 	} else {
 		attrs := []attribute.KeyValue{
@@ -76,7 +85,7 @@ func shouldRetry(r common.OCIOperationResponse) bool {
 		}
 		conf.counter.Add(context.TODO(), 1, attrs...)
 	}
-	time.Sleep(13 * time.Second)
+	time.Sleep(conf.delay * time.Second)
 	return true
 }
 
@@ -91,6 +100,17 @@ func main() {
 	go serveMetrics()
 
 	ctr, err := meter.SyncFloat64().Counter("oci_requests", instrument.WithDescription("Total number of HTTP requests by type."))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	gg, err := meter.AsyncFloat64().Gauge("oci_requests_delay", instrument.WithDescription("Delay between HTTP requests."))
+	if err != nil {
+		log.Fatal(err)
+	}
+	err = meter.RegisterCallback([]instrument.Asynchronous{gg}, func(ctx context.Context) {
+		gg.Observe(ctx, float64(conf.delay), []attribute.KeyValue{}...)
+	})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -111,7 +131,10 @@ func main() {
 		tenancy:               os.Getenv("TENANCY"),
 		region:                os.Getenv("REGION"),
 		counter:               ctr,
+		gauge:                 gg,
 		messageRegex:          regexp.MustCompile(`Message: (.+)\.?`),
+		delay:                 13,
+		lastDelayInc:          time.Now().UTC(),
 	}
 
 	cfg := common.NewRawConfigurationProvider(conf.tenancy, conf.user, conf.region, conf.fingerprint, conf.privateKey, nil)
@@ -154,6 +177,6 @@ func main() {
 
 	for {
 		c.LaunchInstance(context.TODO(), request)
-		time.Sleep(13 * time.Second)
+		time.Sleep(conf.delay * time.Second)
 	}
 }
