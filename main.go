@@ -74,7 +74,7 @@ func shouldRetry(r common.OCIOperationResponse) bool {
 		if response.StatusCode == 429 {
 			conf.delay += 1
 		} else {
-			if time.Now().UTC().Sub(conf.lastDelayInc) > time.Duration(5*time.Minute) {
+			if conf.delay > 31 && time.Now().UTC().Sub(conf.lastDelayInc) > time.Duration(5*time.Minute) {
 				conf.delay -= 1
 				conf.lastDelayInc = time.Now().UTC()
 			}
@@ -133,7 +133,7 @@ func main() {
 		counter:               ctr,
 		gauge:                 gg,
 		messageRegex:          regexp.MustCompile(`Message: (.+)\.?`),
-		delay:                 13,
+		delay:                 31,
 		lastDelayInc:          time.Now().UTC(),
 	}
 
