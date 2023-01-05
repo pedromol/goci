@@ -48,7 +48,7 @@ type config struct {
 var conf config
 
 func serveMetrics() {
-	log.Printf("serving metrics at :2223/metrics")
+	log.Println("serving metrics at :2223/metrics")
 	http.Handle("/metrics", promhttp.Handler())
 	err := http.ListenAndServe(":2223", nil)
 	if err != nil {
@@ -75,7 +75,7 @@ func shouldRetry(r common.OCIOperationResponse) bool {
 			conf.delay += 1
 		} else {
 			if conf.delay > 31 && time.Now().UTC().Sub(conf.lastDelayInc) > time.Duration(5*time.Minute) {
-				conf.delay -= 1
+				// conf.delay -= 1
 				conf.lastDelayInc = time.Now().UTC()
 			}
 		}
