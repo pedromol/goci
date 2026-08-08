@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -17,9 +19,7 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/prometheus"
-	"go.opentelemetry.io/otel/metric/instrument"
-	"go.opentelemetry.io/otel/metric/instrument/asyncfloat64"
-	"go.opentelemetry.io/otel/metric/instrument/syncfloat64"
+	otelmetric "go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/sdk/metric"
 )
 
@@ -31,6 +31,8 @@ type config struct {
 	instanceAD            string
 	instanceCompartment   string
 	instanceSshAuthorized string
+	instanceOcpus         string
+	instanceMemory        string
 	vnicDisplayName       string
 	vnicHostname          string
 	user                  string
@@ -38,8 +40,8 @@ type config struct {
 	privateKey            string
 	tenancy               string
 	region                string
-	counter               syncfloat64.Counter
-	gauge                 asyncfloat64.Gauge
+	counter               otelmetric.Float64Counter
+	gauge                 otelmetric.Float64ObservableGauge
 	messageRegex          *regexp.Regexp
 	delay                 time.Duration
 	lastDelayInc          time.Time
@@ -60,18 +62,22 @@ func shouldRetry(r common.OCIOperationResponse) bool {
 	response := r.Response.HTTPResponse()
 
 	if response != nil {
+		code := response.StatusCode
+		message := ""
 		attrs := []attribute.KeyValue{
-			attribute.Key("code").String(strconv.Itoa(response.StatusCode)),
+			attribute.Key("code").String(strconv.Itoa(code)),
 		}
 
 		msg := conf.messageRegex.FindAllStringSubmatch(r.Error.Error(), 1)
 		for i := range msg {
-			attrs = append(attrs, attribute.Key("message").String(msg[i][1]))
+			message = msg[i][1]
+			attrs = append(attrs, attribute.Key("message").String(message))
 		}
 
-		conf.counter.Add(context.TODO(), 1, attrs...)
+		conf.counter.Add(context.TODO(), 1, otelmetric.WithAttributes(attrs...))
+		printMetric(&code, message)
 
-		if response.StatusCode == 429 {
+		if code == 429 {
 			conf.delay += 1
 		} else {
 			if time.Now().UTC().Sub(conf.lastDelayInc) > time.Duration(5*time.Minute) {
@@ -80,13 +86,29 @@ func shouldRetry(r common.OCIOperationResponse) bool {
 			}
 		}
 	} else {
+		message := r.Error.Error()
 		attrs := []attribute.KeyValue{
-			attribute.Key("message").String(r.Error.Error()),
+			attribute.Key("message").String(message),
 		}
-		conf.counter.Add(context.TODO(), 1, attrs...)
+		conf.counter.Add(context.TODO(), 1, otelmetric.WithAttributes(attrs...))
+		printMetric(nil, message)
 	}
 	time.Sleep(conf.delay * time.Second)
 	return true
+}
+
+func printMetric(code *int, message string) {
+	entry := struct {
+		Metric  string `json:"metric"`
+		Code    *int   `json:"code,omitempty"`
+		Message string `json:"message,omitempty"`
+	}{
+		Metric:  "oci_requests",
+		Code:    code,
+		Message: message,
+	}
+	out, _ := json.Marshal(entry)
+	fmt.Println(string(out))
 }
 
 func main() {
@@ -99,18 +121,19 @@ func main() {
 
 	go serveMetrics()
 
-	ctr, err := meter.SyncFloat64().Counter("oci_requests", instrument.WithDescription("Total number of HTTP requests by type."))
+	ctr, err := meter.Float64Counter("oci_requests", otelmetric.WithDescription("Total number of HTTP requests by type."))
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	gg, err := meter.AsyncFloat64().Gauge("oci_requests_delay", instrument.WithDescription("Delay between HTTP requests."))
+	gg, err := meter.Float64ObservableGauge("oci_requests_delay", otelmetric.WithDescription("Delay between HTTP requests."))
 	if err != nil {
 		log.Fatal(err)
 	}
-	err = meter.RegisterCallback([]instrument.Asynchronous{gg}, func(ctx context.Context) {
-		gg.Observe(ctx, float64(conf.delay), []attribute.KeyValue{}...)
-	})
+	_, err = meter.RegisterCallback(func(ctx context.Context, obs otelmetric.Observer) error {
+		obs.ObserveFloat64(gg, float64(conf.delay))
+		return nil
+	}, gg)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -123,6 +146,8 @@ func main() {
 		instanceAD:            os.Getenv("INSTANCE_AD"),
 		instanceCompartment:   os.Getenv("INSTANCE_COMPARTMENT"),
 		instanceSshAuthorized: os.Getenv("INSTANCE_SSHAUTHORIZED"),
+		instanceOcpus:         os.Getenv("INSTANCE_OCPUS"),
+		instanceMemory:        os.Getenv("INSTANCE_MEMORY_GBS"),
 		vnicDisplayName:       os.Getenv("VNIC_DISPLAY_NAME"),
 		vnicHostname:          os.Getenv("VNIC_HOSTNAME"),
 		user:                  os.Getenv("USER"),
@@ -149,6 +174,18 @@ func main() {
 		common.WithShouldRetryOperation(shouldRetry),
 	)
 
+	// parse numeric env vars for shape config
+	parseFloat32 := func(s string) float32 {
+		if s == "" {
+			return 0
+		}
+		v, err := strconv.ParseFloat(s, 32)
+		if err != nil {
+			return 0
+		}
+		return float32(v)
+	}
+
 	request := core.LaunchInstanceRequest{
 		LaunchInstanceDetails: core.LaunchInstanceDetails{
 			CompartmentId:      common.String(conf.instanceCompartment),
@@ -167,7 +204,7 @@ func main() {
 			},
 			SourceDetails: core.InstanceSourceViaImageDetails{ImageId: common.String(conf.instanceImage)},
 			Shape:         common.String(conf.instanceShape),
-			ShapeConfig:   &core.LaunchInstanceShapeConfigDetails{Ocpus: common.Float32(4), MemoryInGBs: common.Float32(24)},
+			ShapeConfig:   &core.LaunchInstanceShapeConfigDetails{Ocpus: common.Float32(parseFloat32(conf.instanceOcpus)), MemoryInGBs: common.Float32(parseFloat32(conf.instanceMemory))},
 			Metadata:      map[string]string{"ssh_authorized_keys": conf.instanceSshAuthorized},
 		},
 		RequestMetadata: common.RequestMetadata{
