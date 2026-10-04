@@ -19,4 +19,6 @@ services:
       - PRIVATE_KEY=
       - TENANCY=
       - REGION=
+      - TELEGRAM_TOKEN=
+      - TELEGRAM_CHAT_ID=
     restart: unless-stopped

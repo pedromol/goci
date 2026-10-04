@@ -3,9 +3,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"strconv"
@@ -40,6 +43,8 @@ type config struct {
 	privateKey            string
 	tenancy               string
 	region                string
+	telegramToken         string
+	telegramChatID        string
 	counter               otelmetric.Float64Counter
 	gauge                 otelmetric.Float64ObservableGauge
 	messageRegex          *regexp.Regexp
@@ -111,6 +116,68 @@ func printMetric(code *int, message string) {
 	fmt.Println(string(out))
 }
 
+func strValue(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+func telegramEnabled() bool {
+	return conf.telegramToken != "" && conf.telegramChatID != ""
+}
+
+func notifyTelegram(text string) {
+	if !telegramEnabled() {
+		return
+	}
+
+	form := url.Values{}
+	form.Set("chat_id", conf.telegramChatID)
+	form.Set("text", text)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.PostForm(fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", conf.telegramToken), form)
+	if err != nil {
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) {
+			err = urlErr.Err
+		}
+		log.Printf("telegram: request failed: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("telegram: unexpected status %d: %s", resp.StatusCode, string(body))
+		return
+	}
+
+	log.Println("telegram: notification sent")
+}
+
+func notifyInstanceLaunched(i core.Instance) {
+	if !telegramEnabled() {
+		return
+	}
+
+	createdAt := ""
+	if i.TimeCreated != nil {
+		createdAt = i.TimeCreated.Format(time.RFC3339)
+	}
+
+	notifyTelegram(fmt.Sprintf(
+		"✅ Instância OCI criada\n\nNome: %s\nOCID: %s\nShape: %s\nAD: %s\nRegião: %s\nCriada em: %s",
+		strValue(i.DisplayName),
+		strValue(i.Id),
+		strValue(i.Shape),
+		strValue(i.AvailabilityDomain),
+		strValue(i.Region),
+		createdAt,
+	))
+}
+
 func main() {
 	exporter, err := prometheus.New()
 	if err != nil {
@@ -155,6 +222,8 @@ func main() {
 		privateKey:            strings.Replace(os.Getenv("PRIVATE_KEY"), "\\n", "\n", -1),
 		tenancy:               os.Getenv("TENANCY"),
 		region:                os.Getenv("REGION"),
+		telegramToken:         os.Getenv("TELEGRAM_TOKEN"),
+		telegramChatID:        os.Getenv("TELEGRAM_CHAT_ID"),
 		counter:               ctr,
 		gauge:                 gg,
 		messageRegex:          regexp.MustCompile(`Message: (.+)\.?`),
@@ -213,7 +282,10 @@ func main() {
 	}
 
 	for {
-		c.LaunchInstance(context.TODO(), request)
+		response, err := c.LaunchInstance(context.TODO(), request)
+		if err == nil {
+			notifyInstanceLaunched(response.Instance)
+		}
 		time.Sleep(conf.delay * time.Second)
 	}
 }

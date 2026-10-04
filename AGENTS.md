@@ -41,10 +41,18 @@ Nenhum comando de lint/typecheck além de `go vet ./...` está configurado.
   - **HTTP 429** → `conf.delay++` (backoff aditivo, +1s por ocorrência).
   - **Outros erros** → decai `conf.delay--` apenas se já passaram 5 minutos desde o último decremento (`lastDelayInc`).
   - O delay nunca é zerado pelo código; o mínimo prático é garantido pelo ritmo de decaimento.
-- Depois do callback de retry, o loop principal ainda dorme `conf.delay` segundos antes da próxima chamada `LaunchInstance` (`for { c.LaunchInstance(...); time.Sleep(conf.delay * time.Second) }`).
-- O erro retornado por `c.LaunchInstance` é **descartado** no loop principal — a visibilidade vem das métricas, não do log.
+- Depois do callback de retry, o loop principal ainda dorme `conf.delay` segundos antes da próxima chamada `LaunchInstance`.
+- O erro retornado por `c.LaunchInstance` é ignorado no loop principal — a visibilidade vem das métricas. O único uso do retorno é detectar sucesso para a notificação: `if err == nil { notifyInstanceLaunched(response.Instance) }`.
+- `core.LaunchInstanceResponse` embute `Instance` como **valor** (não ponteiro), então `notifyInstanceLaunched` recebe `core.Instance`.
 - O regex `Message: (.+)\.?` (`conf.messageRegex`) extrai a mensagem de erro do OCI para os atributos da métrica `oci_requests`.
 - `PRIVATE_KEY` é passada com `\n` literal; o código converte via `strings.Replace(..., "\\n", "\n", -1)`.
+
+## Notificações (Telegram)
+
+- `telegramEnabled()` retorna `true` apenas se `TELEGRAM_TOKEN` **e** `TELEGRAM_CHAT_ID` estiverem preenchidos — a notificação é opcional e o goci funciona normalmente sem ela.
+- `notifyInstanceLaunched(core.Instance)` monta a mensagem (nome, OCID, shape, AD, região, `TimeCreated` em RFC3339) e chama `notifyTelegram`.
+- `notifyTelegram` faz `POST` form-encoded em `https://api.telegram.org/bot<token>/sendMessage` com timeout de 10s, sem nenhuma lib externa (só `net/http`).
+- Falha de envio só gera `log.Printf` — nunca derruba o processo. O erro de rede é desembrulhado de `*url.Error` para **não vazar o token do bot nos logs**; respostas não-200 imprimem status + body.
 
 ## Observabilidade
 

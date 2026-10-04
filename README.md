@@ -13,6 +13,7 @@ O programa é um único arquivo (`main.go`) que executa os seguintes passos:
 3. **Autentica no OCI**: usa API Key (tenancy, user OCID, fingerprint, chave privada e região).
 4. **Monta a requisição de launch**: uma instância com shape configurável, 4 OCPUs, 24 GB de RAM, IP público, hostname, chave SSH e recovery com `RestoreInstance` + live migration.
 5. **Loop infinito**: chama `LaunchInstance` repetidamente, dormindo entre as tentativas de acordo com o backoff dinâmico.
+6. **Notifica sucessos**: quando o launch retorna sem erro, envia uma mensagem no Telegram com os dados da instância criada.
 
 ### Backoff e retry
 
@@ -41,6 +42,25 @@ O `shouldRetry` registra uma callback customizada na retry policy do SDK do OCI:
 | `PRIVATE_KEY` | Chave privada PEM (escapamentos `\n` são convertidos para quebras de linha) |
 | `TENANCY` | OCID da tenancy |
 | `REGION` | Região OCI (ex.: `sa-saopaulo-1`) |
+| `TELEGRAM_TOKEN` | Token do bot do Telegram (opcional). Sem ele a notificação é desabilitada |
+| `TELEGRAM_CHAT_ID` | ID do chat/canal de destino da notificação (opcional) |
+
+## Notificações (Telegram)
+
+A cada `LaunchInstance` bem-sucedido o goci envia uma mensagem ao Telegram:
+
+```
+✅ Instância OCI criada
+
+Nome: goci-01
+OCID: ocid1.instance.oc1.sa-saopaulo-1...
+Shape: VM.Standard.E4.Flex
+AD: Uocm:sa-saopaulo-1-ad-1
+Região: sa-saopaulo-1
+Criada em: 2026-01-01T00:00:00Z
+```
+
+A notificação é **opcional**: se `TELEGRAM_TOKEN` ou `TELEGRAM_CHAT_ID` estiverem vazios, nada é enviado. Falhas de envio apenas são logadas (`telegram: ...`) e nunca interrompem o loop — erros de launch continuam visíveis pelas métricas.
 
 ## Métricas
 
