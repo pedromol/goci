@@ -178,6 +178,52 @@ func notifyInstanceLaunched(i core.Instance) {
 	))
 }
 
+func maskValue(s string) string {
+	if s == "" {
+		return ""
+	}
+	if len(s) <= 3 {
+		return strings.Repeat("*", len(s))
+	}
+	return s[:3] + strings.Repeat("*", len(s)-3)
+}
+
+func logConfig() {
+	values := []struct {
+		key       string
+		value     string
+		sensitive bool
+	}{
+		{"INSTANCE_SHAPE", conf.instanceShape, false},
+		{"INSTANCE_NAME", conf.instanceName, false},
+		{"INSTANCE_IMAGE", conf.instanceImage, false},
+		{"INSTANCE_SUBNET", conf.instanceSubnet, false},
+		{"INSTANCE_AD", conf.instanceAD, false},
+		{"INSTANCE_COMPARTMENT", conf.instanceCompartment, false},
+		{"INSTANCE_SSHAUTHORIZED", conf.instanceSshAuthorized, false},
+		{"INSTANCE_OCPUS", conf.instanceOcpus, false},
+		{"INSTANCE_MEMORY_GBS", conf.instanceMemory, false},
+		{"VNIC_DISPLAY_NAME", conf.vnicDisplayName, false},
+		{"VNIC_HOSTNAME", conf.vnicHostname, false},
+		{"USER", conf.user, false},
+		{"FINGERPRINT", conf.fingerprint, true},
+		{"PRIVATE_KEY", conf.privateKey, true},
+		{"TENANCY", conf.tenancy, false},
+		{"REGION", conf.region, false},
+		{"TELEGRAM_TOKEN", conf.telegramToken, true},
+		{"TELEGRAM_CHAT_ID", conf.telegramChatID, true},
+	}
+
+	for _, v := range values {
+		val := v.value
+		if v.sensitive {
+			val = maskValue(val)
+		}
+		val = strings.Replace(val, "\n", "\\n", -1)
+		log.Printf("config: %s=%s", v.key, val)
+	}
+}
+
 func main() {
 	exporter, err := prometheus.New()
 	if err != nil {
@@ -230,6 +276,8 @@ func main() {
 		delay:                 31,
 		lastDelayInc:          time.Now().UTC(),
 	}
+
+	logConfig()
 
 	cfg := common.NewRawConfigurationProvider(conf.tenancy, conf.user, conf.region, conf.fingerprint, conf.privateKey, nil)
 
